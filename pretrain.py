@@ -27,11 +27,11 @@ from torchvision import models
 from exceptions.exceptions import InvalidBackboneError
 
 parser = argparse.ArgumentParser(description='Barlow Twins Training')
-parser.add_argument('data', type=str, metavar='DIR',
+parser.add_argument('--data', type=str, metavar='DIR',
                     help='path to dataset', default='/data/zzh/data')
 parser.add_argument('--set', type=str, choices=['stl10', 'cifar10', 'cifar100', 'tiny', 'imagenet'], default='stl10',
                     help='dataset')
-parser.add_argument('--base-model', type=str, choices=['resnet18', 'resnet50'], help='base model as backbone')
+parser.add_argument('--base-model', type=str, choices=['resnet18', 'resnet50'], default='resnet18', help='base model as backbone')
 parser.add_argument('--workers', default=8, type=int, metavar='N',
                     help='number of data loader workers')
 parser.add_argument('--epochs', default=1000, type=int, metavar='N',
@@ -63,7 +63,7 @@ def main():
     pretrain_time = str(datetime.datetime.now().replace(microsecond=0).strftime("%Y%m%d-%H%M"))
     # dataset
     if args.set == "stl10":
-        save_path_base = "saved/STL-10_" + pretrain_time + '_' + args.alpha + '_' + args.beta
+        save_path_base = "saved/STL-10_" + pretrain_time + '_' + str(args.alpha) + '_' + str(args.beta)
         args.data = os.path.join(args.data, "STL-10")
     elif args.set == "cifar10":
         save_path_base = "saved/CIFAR-10_" + pretrain_time
@@ -97,11 +97,11 @@ def main():
         host_name = stdout.decode().splitlines()[0]
         args.rank = int(os.getenv('SLURM_NODEID')) * args.ngpus_per_node
         args.world_size = int(os.getenv('SLURM_NNODES')) * args.ngpus_per_node
-        args.dist_url = f'tcp://{host_name}:58472'
+        args.dist_url = f'tcp://{host_name}:58473'
     else:
         # single-node distributed training
         args.rank = 0
-        args.dist_url = 'tcp://localhost:58472'
+        args.dist_url = 'tcp://localhost:58473'
         args.world_size = args.ngpus_per_node
     torch.multiprocessing.spawn(main_worker, (args,), args.ngpus_per_node)
 
@@ -147,7 +147,9 @@ def main_worker(gpu, args):
         print("===>train from 0")
         start_epoch = 0
 
-    dataset = torchvision.datasets.ImageFolder(args.data / 'train', Transform())
+    dataset = torchvision.datasets.ImageFolder(os.path.join(args.data, "unlabeled"), Transform())
+    if args.rank == 0:
+        print("===>n samples", len(dataset))
     sampler = torch.utils.data.distributed.DistributedSampler(dataset)
     assert args.batch_size % args.world_size == 0
     per_device_batch_size = args.batch_size // args.world_size
