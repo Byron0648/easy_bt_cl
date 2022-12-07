@@ -31,6 +31,7 @@ parser.add_argument('data', type=str, metavar='DIR',
                     help='path to dataset', default='/data/zzh/data')
 parser.add_argument('--set', type=str, choices=['stl10', 'cifar10', 'cifar100', 'tiny', 'imagenet'], default='stl10',
                     help='dataset')
+parse.add_argument('--base-model', type=str, choices=['resnet18', 'resnet50'], help='base model as backbone')
 parser.add_argument('--workers', default=8, type=int, metavar='N',
                     help='number of data loader workers')
 parser.add_argument('--epochs', default=1000, type=int, metavar='N',
@@ -109,16 +110,16 @@ def main_worker(gpu, args):
         backend='nccl', init_method=args.dist_url,
         world_size=args.world_size, rank=args.rank)
 
-    if args.rank == 0:
-        args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        stats_file = open(args.checkpoint_dir / 'stats.txt', 'a', buffering=1)
-        print(' '.join(sys.argv))
-        print(' '.join(sys.argv), file=stats_file)
+    # if args.rank == 0:
+    #     args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    #     stats_file = open(args.checkpoint_dir / 'stats.txt', 'a', buffering=1)
+    #     print(' '.join(sys.argv))
+    #     print(' '.join(sys.argv), file=stats_file)
 
     torch.cuda.set_device(gpu)
     torch.backends.cudnn.benchmark = True
 
-    model = BackBoneNet(args).cuda(gpu)
+    model = BackBoneNet(args.base_model,args.projector).cuda(gpu)
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     param_weights = []
     param_biases = []
@@ -232,10 +233,10 @@ def handle_sigterm(signum, frame):
 
 
 class BackBoneNet(nn.Module):
-    def __init__(self, base_model, out_dim, projector):
+    def __init__(self, base_model, projector):
         super(BackBoneNet, self).__init__()
-        self.resnet_dict = {"resnet18": models.resnet18(pretrained=False, num_classes=out_dim),
-                            "resnet50": models.resnet50(pretrained=False, num_classes=out_dim)}
+        self.resnet_dict = {"resnet18": models.resnet18(pretrained=False),
+                            "resnet50": models.resnet50(pretrained=False)}
 
         self.backbone = self._get_basemodel(base_model)
         self.in_feature = self.backbone.fc.in_features
