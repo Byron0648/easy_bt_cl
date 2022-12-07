@@ -59,6 +59,55 @@ parser.add_argument('--alpha', default=1.0, type=float, help='coefficient of sim
 parser.add_argument('--beta', default=0.0, type=float, help='coefficient of barlowtwins loss')
 
 
+def off_diagonal(x):
+    # return a flattened view of the off-diagonal elements of a square matrix
+    n, m = x.shape
+    assert n == m
+    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
+
+
+def barlowtwins_loss(self, features1, features2):
+    # bn = torch.nn.BatchNorm1d(feature_dim)
+    bn = self.model.bn
+    c = bn(features1).T @ bn(features2)
+    c.div_(self.args.batch_size)
+    torch.distributed.all_reduce(c)
+    on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
+    off_diag = off_diagonal(c).pow_(2).sum()
+    loss = on_diag + self.args.lambd * off_diag
+    return loss
+
+
+def info_nce_loss(self, features):
+    # batchsize为N，获得一个[]维张量为[0-N-1,0-N-1]
+    labels = torch.cat([torch.arange(self.args.batch_size) for i in range(2)], dim=0)
+    # 张量在0维和1维扩充得一个2Nx2N的单位阵
+    labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
+    labels = labels.to(self.args.device)
+
+    features = F.normalize(features, dim=1)
+
+    similarity_matrix = torch.matmul(features, features.T)
+    # discard the main diagonal from both: labels and similarities matrix
+    # 从标签和相似度矩阵中删除对角线
+    mask = torch.eye(labels.shape[0], dtype=torch.bool).to(self.args.device)
+    labels = labels[~mask].view(labels.shape[0], -1)
+    similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
+    # assert similarity_matrix.shape == labels.shape
+
+    # select and combine multiple positives
+    positives = similarity_matrix[labels.bool()].view(labels.shape[0], -1)
+
+    # select only the negatives the negatives
+    negatives = similarity_matrix[~labels.bool()].view(similarity_matrix.shape[0], -1)
+
+    logits = torch.cat([positives, negatives], dim=1)
+    labels = torch.zeros(logits.shape[0], dtype=torch.long).to(self.args.device)
+
+    logits = logits / self.args.temperature
+    return logits, labels
+
+
 def main():
     args = parser.parse_args()
     pretrain_time = str(datetime.datetime.now().replace(microsecond=0).strftime("%Y%m%d-%H%M"))
@@ -172,10 +221,10 @@ def main_worker(gpu, args):
                 images = torch.cat([y1, y2], dim=0)
                 images = images.cuda(gpu, non_blocking=True)
                 features = model(images)
-                logits, labels = model.info_nce_loss(features)
+                logits, labels = info_nce_loss(features)
                 simclr_loss = CrossEntropyLoss(logits, labels)
                 # barlowtwins_loss
-                barlowtwins_loss = model.barlowtwins_loss(features[0], features[1])
+                barlowtwins_loss = barlowtwins_loss(features[0], features[1])
                 loss = args.alpha * simclr_loss + args.beta * barlowtwins_loss
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -272,53 +321,7 @@ class BackBoneNet(nn.Module):
         return self.projector(y)
 
 
-def off_diagonal(x):
-    # return a flattened view of the off-diagonal elements of a square matrix
-    n, m = x.shape
-    assert n == m
-    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
 
-
-def barlowtwins_loss(self, features1, features2):
-    # bn = torch.nn.BatchNorm1d(feature_dim)
-    bn = self.model.bn
-    c = bn(features1).T @ bn(features2)
-    c.div_(self.args.batch_size)
-    torch.distributed.all_reduce(c)
-    on_diag = torch.diagonal(c).add_(-1).pow_(2).sum()
-    off_diag = off_diagonal(c).pow_(2).sum()
-    loss = on_diag + self.args.lambd * off_diag
-    return loss
-
-
-def info_nce_loss(self, features):
-    # batchsize为N，获得一个[]维张量为[0-N-1,0-N-1]
-    labels = torch.cat([torch.arange(self.args.batch_size) for i in range(2)], dim=0)
-    # 张量在0维和1维扩充得一个2Nx2N的单位阵
-    labels = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()
-    labels = labels.to(self.args.device)
-
-    features = F.normalize(features, dim=1)
-
-    similarity_matrix = torch.matmul(features, features.T)
-    # discard the main diagonal from both: labels and similarities matrix
-    # 从标签和相似度矩阵中删除对角线
-    mask = torch.eye(labels.shape[0], dtype=torch.bool).to(self.args.device)
-    labels = labels[~mask].view(labels.shape[0], -1)
-    similarity_matrix = similarity_matrix[~mask].view(similarity_matrix.shape[0], -1)
-    # assert similarity_matrix.shape == labels.shape
-
-    # select and combine multiple positives
-    positives = similarity_matrix[labels.bool()].view(labels.shape[0], -1)
-
-    # select only the negatives the negatives
-    negatives = similarity_matrix[~labels.bool()].view(similarity_matrix.shape[0], -1)
-
-    logits = torch.cat([positives, negatives], dim=1)
-    labels = torch.zeros(logits.shape[0], dtype=torch.long).to(self.args.device)
-
-    logits = logits / self.args.temperature
-    return logits, labels
 
 
 class LARS(optim.Optimizer):
