@@ -31,7 +31,8 @@ parser.add_argument('--data', type=str, metavar='DIR',
                     help='path to dataset', default='/data/zzh/data')
 parser.add_argument('--set', type=str, choices=['stl10', 'cifar10', 'cifar100', 'tiny', 'imagenet'], default='stl10',
                     help='dataset')
-parser.add_argument('--base-model', type=str, choices=['resnet18', 'resnet50'], default='resnet18', help='base model as backbone')
+parser.add_argument('--base-model', type=str, choices=['resnet18', 'resnet50'], default='resnet18',
+                    help='base model as backbone')
 parser.add_argument('--workers', default=8, type=int, metavar='N',
                     help='number of data loader workers')
 parser.add_argument('--epochs', default=1000, type=int, metavar='N',
@@ -171,10 +172,10 @@ def main_worker(gpu, args):
                 images = torch.cat([y1, y2], dim=0)
                 images = images.cuda(gpu, non_blocking=True)
                 features = model(images)
-                logits, labels = info_nce_loss(features)
+                logits, labels = model.info_nce_loss(features)
                 simclr_loss = CrossEntropyLoss(logits, labels)
                 # barlowtwins_loss
-                barlowtwins_loss(features[0], features[1])
+                barlowtwins_loss = model.barlowtwins_loss(features[0], features[1])
                 loss = args.alpha * simclr_loss + args.beta * barlowtwins_loss
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -270,13 +271,11 @@ class BackBoneNet(nn.Module):
         y = self.backbone(x)
         return self.projector(y)
 
-
     def off_diagonal(x):
         # return a flattened view of the off-diagonal elements of a square matrix
         n, m = x.shape
         assert n == m
         return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
-
 
     def barlowtwins_loss(self, features1, features2, feature_dim):
         # bn = torch.nn.BatchNorm1d(feature_dim)
@@ -288,7 +287,6 @@ class BackBoneNet(nn.Module):
         off_diag = off_diagonal(c).pow_(2).sum()
         loss = on_diag + self.args.lambd * off_diag
         return loss
-
 
     def info_nce_loss(self, features):
         # batchsize为N，获得一个[]维张量为[0-N-1,0-N-1]
