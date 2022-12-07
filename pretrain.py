@@ -31,7 +31,7 @@ parser.add_argument('data', type=str, metavar='DIR',
                     help='path to dataset', default='/data/zzh/data')
 parser.add_argument('--set', type=str, choices=['stl10', 'cifar10', 'cifar100', 'tiny', 'imagenet'], default='stl10',
                     help='dataset')
-parse.add_argument('--base-model', type=str, choices=['resnet18', 'resnet50'], help='base model as backbone')
+parser.add_argument('--base-model', type=str, choices=['resnet18', 'resnet50'], help='base model as backbone')
 parser.add_argument('--workers', default=8, type=int, metavar='N',
                     help='number of data loader workers')
 parser.add_argument('--epochs', default=1000, type=int, metavar='N',
@@ -51,8 +51,9 @@ parser.add_argument('--projector', default='8192-8192-8192', type=str,
 parser.add_argument('--print-freq', default=100, type=int, metavar='N',
                     help='print frequency')
 parser.add_argument('--save-freq', default=100, type=int, help='save frequency')
-parser.add_argument('--resume', type=str, default=None,
-                    metavar='DIR', help='path to checkpoint directory')
+parser.add_argument('--resume', type=str, default=None, help='path to checkpoint directory')
+parser.add_argument('--model_path', type=str, default="models_pt",
+                    help='path to save model')
 parser.add_argument('--alpha', default=1.0, type=float, help='coefficient of simclr loss')
 parser.add_argument('--beta', default=0.0, type=float, help='coefficient of barlowtwins loss')
 
@@ -62,7 +63,7 @@ def main():
     pretrain_time = str(datetime.datetime.now().replace(microsecond=0).strftime("%Y%m%d-%H%M"))
     # dataset
     if args.set == "stl10":
-        save_path_base = "saved/STL-10_" + pretrain_time
+        save_path_base = "saved/STL-10_" + pretrain_time + '_' + args.alpha + '_' + args.beta
         args.data = os.path.join(args.data, "STL-10")
     elif args.set == "cifar10":
         save_path_base = "saved/CIFAR-10_" + pretrain_time
@@ -79,6 +80,7 @@ def main():
     else:
         raise FileNotFoundError
 
+    args.model_path = os.path.join(save_path_base, args.model_path)
     if not os.path.isdir(save_path_base):
         os.makedirs(save_path_base)
 
@@ -119,7 +121,7 @@ def main_worker(gpu, args):
     torch.cuda.set_device(gpu)
     torch.backends.cudnn.benchmark = True
 
-    model = BackBoneNet(args.base_model,args.projector).cuda(gpu)
+    model = BackBoneNet(args.base_model, args.projector).cuda(gpu)
     model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     param_weights = []
     param_biases = []
